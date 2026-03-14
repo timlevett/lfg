@@ -31,7 +31,15 @@ Claude Code / Cursor hooks
    BLE → iDotMatrix 64x64 LED
 ```
 
-lfg receives webhook events (`PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, etc.), manages an agent state machine, renders 8x8 pixel-art sprites into animated GIF frames, and sends them over BLE to the display.
+lfg receives webhook events (`PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, etc.) and manages an agent state machine. The render pipeline:
+
+1. Every 250ms, the display state is hashed and compared to the last sent frame
+2. On change, a 2-second debounce timer starts — rapid tool calls don't spam the display
+3. After 2s of stability, lfg renders a 6-frame animated GIF from the current state
+4. The GIF is split into 4KB packets and sent over BLE to the iDotMatrix panel
+5. If any agent is in the Requesting state, the animation runs faster (0.5s/frame vs 1.25s/frame) so the fire icon pulses urgently
+
+In `--no-ble` mode, lfg runs as an HTTP-only server — useful for testing the webhook pipeline and state machine without hardware. Use `POST /debug/gif` to export the current display as a GIF file.
 
 ## Features
 
