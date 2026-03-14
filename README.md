@@ -58,19 +58,30 @@ In `--no-ble` mode, lfg runs as an HTTP-only server — useful for testing the w
 
 You need an iDotMatrix 64x64 LED panel (~$25 on AliExpress). Any `IDM-*` BLE device should work.
 
-### Build & run
+### Install
 
 ```bash
-# Clone and build
+# Homebrew (macOS)
+brew tap terraboops/tap
+brew install lfg
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/terraboops/lfg.git
 cd lfg
 cargo build --release
+```
 
-# Run (auto-discovers IDM-* BLE device)
-./target/release/lfg
+### Run
 
-# Run without BLE (HTTP-only, for testing)
-./target/release/lfg --no-ble
+```bash
+# Auto-discovers IDM-* BLE device
+lfg
+
+# Without BLE (HTTP-only, for testing)
+lfg --no-ble
 ```
 
 ### Configure hooks
