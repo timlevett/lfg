@@ -25,6 +25,8 @@ const BLE_DEBOUNCE_SECS: f64 = 2.0;
 const BLE_POLL_SECS: f64 = 0.25;
 const BLE_HEARTBEAT_SECS: f64 = 30.0;
 
+const MAX_RECONNECT_DELAY_SECS: u64 = 60;
+
 /// Build GIF packets for BLE transmission.
 /// Each packet has a 16-byte header + up to 4096 bytes of GIF data.
 pub fn build_gif_packets(gif_data: &[u8]) -> Vec<Vec<u8>> {
@@ -66,14 +68,57 @@ pub fn build_gif_packets(gif_data: &[u8]) -> Vec<Vec<u8>> {
 
 /// Main BLE render loop. Runs in a spawned task.
 pub async fn ble_loop(state: Arc<RwLock<DisplayState>>) {
-    use btleplug::api::{Peripheral as _, WriteType};
+    use btleplug::api::{Manager as _, Peripheral as _, WriteType};
+    use btleplug::platform::Manager;
+
+    // Create manager and adapter ONCE — reuse across reconnections
+    let manager = match Manager::new().await {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("Failed to create BLE manager: {} — BLE disabled", e);
+            return;
+        }
+    };
+    let adapter = match manager.adapters().await {
+        Ok(adapters) => match adapters.into_iter().next() {
+            Some(a) => a,
+            None => {
+                warn!("No BLE adapters found — BLE disabled");
+                return;
+            }
+        },
+        Err(e) => {
+            warn!("Failed to enumerate BLE adapters: {} — BLE disabled", e);
+            return;
+        }
+    };
+
+    let mut consecutive_failures: u32 = 0;
 
     loop {
-        // Try to connect
-        let connection = match connect_ble().await {
-            Some(c) => c,
+        // Check for force-reconnect flag
+        {
+            let mut s = state.write().await;
+            if s.force_ble_reconnect {
+                s.force_ble_reconnect = false;
+                info!("Force BLE reconnect requested");
+            }
+        }
+
+        // Try to connect (reusing the adapter)
+        let connection = match connect_ble(&adapter).await {
+            Some(c) => {
+                consecutive_failures = 0;
+                c
+            }
             None => {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                consecutive_failures += 1;
+                let delay = (5 * consecutive_failures as u64).min(MAX_RECONNECT_DELAY_SECS);
+                warn!(
+                    "BLE connection attempt {} failed — retrying in {}s",
+                    consecutive_failures, delay
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
                 continue;
             }
         };
@@ -86,6 +131,18 @@ pub async fn ble_loop(state: Arc<RwLock<DisplayState>>) {
         info!("BLE render loop started");
 
         loop {
+            // Check for force-reconnect flag
+            {
+                let s = state.read().await;
+                if s.force_ble_reconnect {
+                    drop(s);
+                    let mut s = state.write().await;
+                    s.force_ble_reconnect = false;
+                    warn!("Force BLE reconnect triggered — disconnecting");
+                    break;
+                }
+            }
+
             // Check connectivity
             match peripheral.is_connected().await {
                 Ok(false) => {
@@ -179,25 +236,33 @@ pub async fn ble_loop(state: Arc<RwLock<DisplayState>>) {
         }
 
         // Cleanup on disconnect
+        info!("Disconnecting BLE peripheral for reconnection...");
         let _ = peripheral.disconnect().await;
         tokio::time::sleep(Duration::from_secs(3)).await;
+        info!("Attempting BLE reconnection...");
     }
 }
 
-async fn connect_ble() -> Option<(btleplug::platform::Peripheral, btleplug::api::Characteristic)> {
-    use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
-    use btleplug::platform::Manager;
-
-    let manager = Manager::new().await.ok()?;
-    let adapters = manager.adapters().await.ok()?;
-    let adapter = adapters.into_iter().next()?;
+async fn connect_ble(
+    adapter: &btleplug::platform::Adapter,
+) -> Option<(btleplug::platform::Peripheral, btleplug::api::Characteristic)> {
+    use btleplug::api::{Central, Peripheral as _, WriteType};
 
     info!("Scanning for IDM-* devices...");
-    adapter.start_scan(ScanFilter::default()).await.ok()?;
+    if let Err(e) = adapter.start_scan(btleplug::api::ScanFilter::default()).await {
+        warn!("BLE scan start failed: {}", e);
+        return None;
+    }
     tokio::time::sleep(Duration::from_secs(6)).await;
-    adapter.stop_scan().await.ok();
+    let _ = adapter.stop_scan().await;
 
-    let peripherals = adapter.peripherals().await.ok()?;
+    let peripherals = match adapter.peripherals().await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Failed to list BLE peripherals: {}", e);
+            return None;
+        }
+    };
 
     // Find IDM-* device
     let mut idm_peripheral = None;
@@ -213,11 +278,24 @@ async fn connect_ble() -> Option<(btleplug::platform::Peripheral, btleplug::api:
             }
         }
     }
-    let idm = idm_peripheral?;
+    let idm = match idm_peripheral {
+        Some(p) => p,
+        None => {
+            warn!("No IDM-* device found during scan");
+            return None;
+        }
+    };
     info!("Found {} at {:?}", idm_name, idm.id());
 
-    idm.connect().await.ok()?;
-    idm.discover_services().await.ok()?;
+    if let Err(e) = idm.connect().await {
+        warn!("BLE connect to {} failed: {}", idm_name, e);
+        return None;
+    }
+    if let Err(e) = idm.discover_services().await {
+        warn!("BLE service discovery failed: {}", e);
+        let _ = idm.disconnect().await;
+        return None;
+    }
 
     // Find write characteristic (resolve once, cache the handle)
     let mut write_char = None;
@@ -234,7 +312,14 @@ async fn connect_ble() -> Option<(btleplug::platform::Peripheral, btleplug::api:
             break;
         }
     }
-    let write_char = write_char?;
+    let write_char = match write_char {
+        Some(c) => c,
+        None => {
+            warn!("No matching write characteristic found on {}", idm_name);
+            let _ = idm.disconnect().await;
+            return None;
+        }
+    };
 
     // Send screen on + brightness
     let _ = idm.write(&write_char, CMD_SCREEN_ON, WriteType::WithoutResponse).await;

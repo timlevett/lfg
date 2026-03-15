@@ -150,6 +150,7 @@ pub struct DisplayState {
     pub stats: Stats,
     pub stats_display: StatsDisplay,
     pub db_conn: Option<Mutex<rusqlite::Connection>>,
+    pub force_ble_reconnect: bool,
 }
 
 impl std::fmt::Debug for DisplayState {
@@ -177,6 +178,7 @@ impl Default for DisplayState {
             stats: Stats::default(),
             stats_display: StatsDisplay::default(),
             db_conn: None,
+            force_ble_reconnect: false,
         }
     }
 }

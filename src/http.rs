@@ -39,6 +39,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/debug/gif", post(debug_gif))
         .route("/sprites/export", post(sprites_export))
         .route("/sprites/reload", post(sprites_reload))
+        .route("/debug/ble-disconnect-simulate", post(debug_ble_disconnect_simulate))
         .with_state(state)
 }
 
@@ -285,4 +286,11 @@ async fn sprites_export() -> Json<Value> {
 
 async fn sprites_reload() -> Json<Value> {
     Json(json!({"ok": true, "message": "Sprite reload not yet implemented in Rust build"}))
+}
+
+async fn debug_ble_disconnect_simulate(State(state): State<SharedState>) -> Json<Value> {
+    let mut s = state.write().await;
+    s.force_ble_reconnect = true;
+    info!("BLE disconnect simulated via /debug/ble-disconnect-simulate");
+    Json(json!({"ok": true, "message": "BLE disconnect simulated — will auto-reconnect"}))
 }
