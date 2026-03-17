@@ -1,5 +1,9 @@
 # LFG hook config for OpenAI Codex CLI (with boopifier)
 # Copy to ~/.codex/config.toml (or merge into existing config)
+#
+# Note: hooks are behind a feature flag — add this to enable them:
+[features]
+codex_hooks = true
 
 [[hooks.pre_tool_use]]
 command = "boopifier -c ~/.config/lfg/boopifier-codex.json"

@@ -165,6 +165,9 @@ chmod +x ~/.local/bin/lfg-hook.sh
 **Codex CLI** — add to `~/.codex/config.toml`:
 
 ```toml
+[features]
+codex_hooks = true
+
 [[hooks.pre_tool_use]]
 command = "LFG_HOST=codex ~/.local/bin/lfg-hook.sh"
 
