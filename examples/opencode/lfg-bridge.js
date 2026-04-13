@@ -14,25 +14,34 @@
 
 const LFG_WEBHOOK_URL = process.env.LFG_WEBHOOK_URL || "http://localhost:6969/webhook";
 const LFG_HOST_IDENTIFIER = "opencode";
+const LFG_TIMEOUT_MS = 500; // Quick timeout - don't block if lfg is offline
 
 /**
  * Send event to lfg webhook.
  * Wire format: POST /webhook?host=<host>  { "text": "EventType|sessionID|toolName" }
+ * Failures are silently ignored to avoid spamming stderr when lfg is offline.
  */
 async function sendToLfg(eventType, sessionID, toolName) {
   const url = new URL(LFG_WEBHOOK_URL);
   url.searchParams.set("host", LFG_HOST_IDENTIFIER);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LFG_TIMEOUT_MS);
+
   try {
     const response = await fetch(url.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: `${eventType}|${sessionID}|${toolName}` })
+      body: JSON.stringify({ text: `${eventType}|${sessionID}|${toolName}` }),
+      signal: controller.signal
     });
     if (!response.ok) {
-      console.error(`[lfg-bridge] Webhook failed: ${response.status} ${response.statusText}`);
+      // Silently ignore - lfg may be offline
     }
   } catch (error) {
-    console.error(`[lfg-bridge] Webhook error: ${error.message}`);
+    // Silently ignore errors (timeout, connection refused, etc.)
+    // This prevents spam when lfg server is offline
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
