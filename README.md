@@ -184,6 +184,21 @@ codex_hooks = true
 
 Environment variables: `LFG_URL` (default `http://127.0.0.1:5555/webhook`), `LFG_HOST` (default `claude`), `LFG_TOKEN` (unset by default — set to match `--token` if auth is enabled). Set `LFG_HOST=cursor` for Cursor hooks, `LFG_HOST=codex` for Codex CLI.
 
+**OpenCode** — OpenCode uses a native plugin system. Copy the plugin and add to `~/.config/opencode/opencode.json`:
+
+```bash
+cp examples/opencode/lfg-bridge.js ~/.config/opencode/plugins/
+```
+
+`~/.config/opencode/opencode.json`:
+```json
+{
+  "plugin": ["./plugins/lfg-bridge.js"]
+}
+```
+
+See [examples/opencode/README.md](examples/opencode/README.md) for details on global vs project-specific installation, environment variables (`LFG_WEBHOOK_URL`), and troubleshooting.
+
 #### Option B: With boopifier (adds sound alerts, multi-handler routing)
 
 Install [boopifier](https://github.com/terraboops/boopifier), then copy the example configs:
